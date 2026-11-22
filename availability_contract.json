@@ -1,0 +1,69 @@
+{
+  "name": "get_availability",
+  "description": "Return free time windows for an existing room on a specified date, within college operating hours. Read-only. Do not use to create or modify reservations.",
+  "type": "read",
+  "requires_approval": false,
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "room_id": { "type": "integer", "minimum": 1 },
+      "date": { "type": "string", "format": "date" }
+    },
+    "required": ["room_id", "date"],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "status": { "const": "ok" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "room_id": { "type": "integer", "minimum": 1 },
+              "date": { "type": "string", "format": "date" },
+              "free_windows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "start": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" },
+                    "end": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }
+                  },
+                  "required": ["start", "end"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["room_id", "date", "free_windows"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["status", "data"],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "status": { "const": "error" },
+          "error": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["invalid_input", "room_not_found", "service_unavailable", "database_error"]
+              },
+              "message": { "type": "string", "minLength": 1 },
+              "retryable": { "type": "boolean" }
+            },
+            "required": ["type", "message", "retryable"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["status", "error"],
+        "additionalProperties": false
+      }
+    ]
+  }
+}
