@@ -1,6 +1,7 @@
 """In-memory *synthetic* campus for repeatable Colab demos; not the user's SQL data."""
 from __future__ import annotations
 from datetime import datetime, timedelta
+from threading import Lock
 
 
 class TransientBackendError(RuntimeError):
@@ -13,6 +14,7 @@ class MockBackend:
         self.reservations = []
         self.fail_next = 0
         self.calls = 0
+        self._reservation_lock = Lock()
         room_id = 0
         for building in range(1, 6):
             for floor in range(1, 4):
@@ -62,3 +64,36 @@ class MockBackend:
             r["StartTime"] < day + timedelta(days=1) and
             r["EndTime"] > day
         ]
+
+    def create_reservation_atomic(self, *, room_id, event_name, event_type, start, end,
+                                  student_count, min_computers=0, require_projector=False):
+        """Atomically recheck room constraints/conflicts and add one mock booking."""
+        self.maybe_fail()
+        with self._reservation_lock:
+            room = next((r for r in self.rooms if r["RoomID"] == room_id), None)
+            if room is None or room["Capacity"] < student_count:
+                return None
+            if room["ComputerCount"] < min_computers:
+                return None
+            if require_projector and not room["HasProjector"]:
+                return None
+            if any(r["RoomID"] == room_id and r["StartTime"] < end and
+                   r["EndTime"] > start for r in self.reservations):
+                return None
+            reservation_id = max((r["ReservationID"] for r in self.reservations), default=0) + 1
+            self.reservations.append({
+                "ReservationID": reservation_id, "RoomID": room_id,
+                "EventName": event_name, "EventType": event_type,
+                "StartTime": start, "EndTime": end,
+                "StudentCount": student_count,
+            })
+            return reservation_id
+
+    def cancel_reservation_atomic(self, reservation_id):
+        """Remove exactly one synthetic reservation under the booking lock."""
+        self.maybe_fail()
+        with self._reservation_lock:
+            for idx, row in enumerate(self.reservations):
+                if row["ReservationID"] == reservation_id:
+                    return self.reservations.pop(idx)
+            return None

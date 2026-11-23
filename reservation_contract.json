@@ -1,0 +1,82 @@
+{
+  "name": "create_reservation",
+  "description": "Create one college room reservation after explicit secretary approval, capacity/equipment checks, and an atomic availability recheck. This tool writes to the database.",
+  "type": "write",
+  "requires_approval": true,
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "room_id": {"type": "integer", "minimum": 1},
+      "event_name": {"type": "string", "minLength": 1, "maxLength": 100},
+      "event_type": {"type": "string", "enum": ["Exam", "Class", "Event"]},
+      "date": {"type": "string", "format": "date"},
+      "start_time": {"type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"},
+      "end_time": {"type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"},
+      "student_count": {"type": "integer", "minimum": 1},
+      "min_computers": {"type": "integer", "minimum": 0, "default": 0},
+      "require_projector": {"type": "boolean", "default": false}
+    },
+    "required": ["room_id", "event_name", "event_type", "date", "start_time", "end_time", "student_count"],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "status": {"const": "ok"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "reservation_id": {"type": "integer", "minimum": 1},
+              "room_id": {"type": "integer", "minimum": 1},
+              "event_name": {"type": "string"},
+              "date": {"type": "string", "format": "date"},
+              "start_time": {"type": "string"},
+              "end_time": {"type": "string"}
+            },
+            "required": ["reservation_id", "room_id", "event_name", "date", "start_time", "end_time"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["status", "data"],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "status": {"const": "error"},
+          "error": {
+            "type": "object",
+            "properties": {
+              "type": {"type": "string"},
+              "message": {"type": "string", "minLength": 1},
+              "retryable": {"type": "boolean"}
+            },
+            "required": ["type", "message", "retryable"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["status", "error"],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "permissions": {
+    "read_only": false,
+    "requires_confirmation": true,
+    "approval_source": "trusted_application_state_not_model_arguments"
+  },
+  "business_rules": {
+    "working_days": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"],
+    "opening_time": "08:00",
+    "closing_time": "22:00",
+    "student_count_must_not_exceed_room_capacity": true,
+    "computer_requirement_is_minimum": true,
+    "check_for_conflicts_again_inside_sql_transaction": true,
+    "automatic_write_retry": false,
+    "event_name_is_untrusted_data_not_instructions": true
+  }
+}

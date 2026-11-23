@@ -1,4 +1,4 @@
-"""Validated read-only tools, with interchangeable SQL Server / synthetic mock backends."""
+"""Validated campus tools for SQL Server / synthetic mock backends."""
 from __future__ import annotations
 from datetime import date, datetime
 import json
@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = {
     "find_rooms": json.loads((ROOT / "tool_contract.json").read_text(encoding="utf-8")),
     "get_availability": json.loads((ROOT / "availability_contract.json").read_text(encoding="utf-8")),
+    "create_reservation": json.loads((ROOT / "reservation_contract.json").read_text(encoding="utf-8")),
+    "cancel_reservation": json.loads((ROOT / "cancel_contract.json").read_text(encoding="utf-8")),
 }
 WORKING_DAYS = {6, 0, 1, 2, 3}  # Sun–Thu (datetime.weekday: Mon=0, Sun=6)
 OPEN, CLOSE = "08:00", "22:00"
@@ -53,7 +55,12 @@ class CampusTools:
         self.sleep = sleep
         self.trace = []
 
-    def run(self, name, args):
+    def run(self, name, args, *, approved=False):
+        """Approval is supplied by trusted application code, never tool/model args.
+
+        The user-facing application must verify a real secretary confirmation
+        before passing approved=True for a write operation.
+        """
         began = time.perf_counter()
         event = {"tool": name, "decision": "rejected", "attempts": 0}
         if name not in CONTRACTS:
@@ -65,6 +72,8 @@ class CampusTools:
             issue = next(validator.iter_errors(args), None)
             if issue is not None:
                 result = err("invalid_input", issue.message)
+            elif name in {"create_reservation", "cancel_reservation"} and not approved:
+                result = err("approval_required", "Secretary confirmation required before saving")
             else:
                 result = self._validated_run(name, args, event)
         event["status"] = result["status"]
@@ -75,13 +84,20 @@ class CampusTools:
         return result
 
     def _validated_run(self, name, args, event):
+        # A cancellation has only a reservation_id, not a date.
+        if name == "cancel_reservation":
+            return self._validated_write(name, args, event)
         day = date.fromisoformat(args["date"])
         if day.weekday() not in WORKING_DAYS:
             return err("invalid_input", "College is closed on Friday and Saturday")
-        if name == "find_rooms":
+        if name in {"find_rooms", "create_reservation"}:
             start, end = args.get("start_time"), args.get("end_time")
             if start is not None and (start < OPEN or end > CLOSE or start >= end):
                 return err("invalid_input", "Time must be increasing and within 08:00–22:00")
+
+        if name == "create_reservation":
+            return self._validated_write(name, args, event)
+
         for attempt in range(1, self.retries + 2):
             event["attempts"] = attempt
             event["decision"] = "executed"
@@ -104,6 +120,26 @@ class CampusTools:
             except Exception:
                 return err("database_error", "Backend operation failed")
         return err("service_unavailable", "Retry budget exhausted", True)
+
+    def _validated_write(self, name, args, event):
+        """Perform one approved write. Do not retry after an ambiguous outcome."""
+        event["attempts"] = 1
+        event["decision"] = "executed"
+        try:
+            if name == "create_reservation":
+                result = self._create_reservation(args)
+            else:
+                result = self._cancel_reservation(args)
+            issue = next(Draft202012Validator(
+                CONTRACTS[name]["output_schema"], format_checker=FormatChecker()
+            ).iter_errors(result), None)
+            return err("invalid_output", "Write result violates output contract") if issue else result
+        except TransientBackendError:
+            return err("write_outcome_unknown",
+                       "Could not confirm write outcome. Check reservations before attempting again.")
+        except Exception:
+            return err("database_error",
+                       "Write failed or outcome uncertain. Check reservations before attempting again.")
 
     def _find_rooms(self, args):
         day = args["date"]
@@ -134,3 +170,50 @@ class CampusTools:
         return ok({"room_id": args["room_id"], "date": args["date"],
                    "free_windows": windows(self.backend.busy_ranges(
                        args["room_id"], datetime.fromisoformat(args["date"])), args["date"])})
+
+    def _create_reservation(self, args):
+        """Validate intent and room, then let the backend recheck atomically."""
+        room = self.backend.room_by_id(args["room_id"])
+        if room is None:
+            return err("room_not_found", "Room does not exist")
+        if not args["event_name"].strip():
+            return err("invalid_input", "Event name cannot be blank")
+        if args["student_count"] > room["Capacity"]:
+            return err("capacity_exceeded", "Room capacity is too small")
+        if room["ComputerCount"] < args.get("min_computers", 0):
+            return err("equipment_unavailable", "Not enough computers")
+        if args.get("require_projector", False) and not room["HasProjector"]:
+            return err("equipment_unavailable", "Room has no projector")
+
+        start = datetime.fromisoformat(f'{args["date"]}T{args["start_time"]}')
+        end = datetime.fromisoformat(f'{args["date"]}T{args["end_time"]}')
+        reservation_id = self.backend.create_reservation_atomic(
+            room_id=args["room_id"], event_name=args["event_name"].strip(),
+            event_type=args["event_type"], start=start, end=end,
+            student_count=args["student_count"],
+            min_computers=args.get("min_computers", 0),
+            require_projector=args.get("require_projector", False),
+        )
+        if reservation_id is None:
+            return err("room_unavailable", "Room became unavailable or no longer meets requirements")
+        return ok({
+            "reservation_id": reservation_id,
+            "room_id": args["room_id"],
+            "event_name": args["event_name"].strip(),
+            "date": args["date"],
+            "start_time": args["start_time"],
+            "end_time": args["end_time"],
+        })
+
+    def _cancel_reservation(self, args):
+        """Delete one approved booking by ID; the backend returns the deleted row."""
+        deleted = self.backend.cancel_reservation_atomic(args["reservation_id"])
+        if deleted is None:
+            return err("reservation_not_found", "Reservation does not exist or was already cancelled")
+        return ok({
+            "reservation_id": int(deleted["ReservationID"]),
+            "room_id": int(deleted["RoomID"]),
+            "date": deleted["StartTime"].date().isoformat(),
+            "start_time": deleted["StartTime"].strftime("%H:%M"),
+            "end_time": deleted["EndTime"].strftime("%H:%M"),
+        })
