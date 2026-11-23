@@ -13,6 +13,7 @@ CONTRACTS = {
     "get_availability": json.loads((ROOT / "availability_contract.json").read_text(encoding="utf-8")),
     "create_reservation": json.loads((ROOT / "reservation_contract.json").read_text(encoding="utf-8")),
     "cancel_reservation": json.loads((ROOT / "cancel_contract.json").read_text(encoding="utf-8")),
+    "update_reservation": json.loads((ROOT / "update_contract.json").read_text(encoding="utf-8")),
 }
 WORKING_DAYS = {6, 0, 1, 2, 3}  # Sun–Thu (datetime.weekday: Mon=0, Sun=6)
 OPEN, CLOSE = "08:00", "22:00"
@@ -72,7 +73,7 @@ class CampusTools:
             issue = next(validator.iter_errors(args), None)
             if issue is not None:
                 result = err("invalid_input", issue.message)
-            elif name in {"create_reservation", "cancel_reservation"} and not approved:
+            elif name in {"create_reservation", "cancel_reservation", "update_reservation"} and not approved:
                 result = err("approval_required", "Secretary confirmation required before saving")
             else:
                 result = self._validated_run(name, args, event)
@@ -85,7 +86,7 @@ class CampusTools:
 
     def _validated_run(self, name, args, event):
         # A cancellation has only a reservation_id, not a date.
-        if name == "cancel_reservation":
+        if name in {"cancel_reservation", "update_reservation"}:
             return self._validated_write(name, args, event)
         day = date.fromisoformat(args["date"])
         if day.weekday() not in WORKING_DAYS:
@@ -128,8 +129,10 @@ class CampusTools:
         try:
             if name == "create_reservation":
                 result = self._create_reservation(args)
-            else:
+            elif name == "cancel_reservation":
                 result = self._cancel_reservation(args)
+            else:
+                result = self._update_reservation(args)
             issue = next(Draft202012Validator(
                 CONTRACTS[name]["output_schema"], format_checker=FormatChecker()
             ).iter_errors(result), None)
@@ -216,4 +219,60 @@ class CampusTools:
             "date": deleted["StartTime"].date().isoformat(),
             "start_time": deleted["StartTime"].strftime("%H:%M"),
             "end_time": deleted["EndTime"].strftime("%H:%M"),
+        })
+
+    def _update_reservation(self, args):
+        """Partial booking edit; the backend atomically checks stale data and conflicts.
+
+        No automatic write retries. The trusted app confirms exact proposed changes
+        before invoking run(..., approved=True).
+        """
+        previous = self.backend.reservation_by_id(args["reservation_id"])
+        if previous is None:
+            return err("reservation_not_found", "Reservation does not exist")
+
+        room_id = args.get("room_id", int(previous["RoomID"]))
+        event_name = args.get("event_name", previous["EventName"]).strip()
+        event_type = args.get("event_type", previous["EventType"])
+        student_count = args.get("student_count", int(previous["StudentCount"]))
+        day = args.get("date", previous["StartTime"].date().isoformat())
+        start_time = args.get("start_time", previous["StartTime"].strftime("%H:%M"))
+        end_time = args.get("end_time", previous["EndTime"].strftime("%H:%M"))
+        if not event_name:
+            return err("invalid_input", "Event name cannot be blank")
+        if date.fromisoformat(day).weekday() not in WORKING_DAYS:
+            return err("invalid_input", "College is closed on Friday and Saturday")
+        if start_time < OPEN or end_time > CLOSE or start_time >= end_time:
+            return err("invalid_input", "Time must be increasing and within 08:00–22:00")
+
+        room = self.backend.room_by_id(room_id)
+        if room is None:
+            return err("room_not_found", "Target room does not exist")
+        if student_count > room["Capacity"]:
+            return err("capacity_exceeded", "Target room capacity is too small")
+        if room["ComputerCount"] < args.get("min_computers", 0):
+            return err("equipment_unavailable", "Not enough computers in target room")
+        if args.get("require_projector", False) and not room["HasProjector"]:
+            return err("equipment_unavailable", "Target room has no projector")
+
+        start = datetime.fromisoformat(f"{day}T{start_time}")
+        end = datetime.fromisoformat(f"{day}T{end_time}")
+        updated = self.backend.update_reservation_atomic(
+            reservation_id=args["reservation_id"], expected=previous,
+            room_id=room_id, event_name=event_name, event_type=event_type,
+            start=start, end=end, student_count=student_count,
+            min_computers=args.get("min_computers", 0),
+            require_projector=args.get("require_projector", False),
+        )
+        if updated is None:
+            return err("reservation_unavailable",
+                       "Booking changed or the target room is no longer suitable/free")
+        return ok({
+            "reservation_id": int(updated["ReservationID"]),
+            "room_id": int(updated["RoomID"]),
+            "event_name": updated["EventName"],
+            "date": updated["StartTime"].date().isoformat(),
+            "start_time": updated["StartTime"].strftime("%H:%M"),
+            "end_time": updated["EndTime"].strftime("%H:%M"),
+            "student_count": int(updated["StudentCount"]),
         })

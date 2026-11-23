@@ -39,6 +39,9 @@ class MockBackend:
                 "StartTime": datetime.fromisoformat(f"{day}T{start}"),
                 "EndTime": datetime.fromisoformat(f"{day}T{end}"),
                 "Title": f"Synthetic event {idx}",
+                "EventName": f"Synthetic event {idx}",
+                "EventType": "Event",
+                "StudentCount": 20,
             })
 
     def maybe_fail(self):
@@ -97,3 +100,37 @@ class MockBackend:
                 if row["ReservationID"] == reservation_id:
                     return self.reservations.pop(idx)
             return None
+
+    def reservation_by_id(self, reservation_id):
+        """Return a snapshot to support compare-and-update semantics."""
+        self.maybe_fail()
+        with self._reservation_lock:
+            row = next((r for r in self.reservations if r["ReservationID"] == reservation_id), None)
+            return dict(row) if row is not None else None
+
+    def update_reservation_atomic(self, *, reservation_id, expected, room_id,
+                                  event_name, event_type, start, end, student_count,
+                                  min_computers=0, require_projector=False):
+        """Update in place under the booking lock, rechecking original state and conflicts."""
+        self.maybe_fail()
+        with self._reservation_lock:
+            booking = next((r for r in self.reservations if r["ReservationID"] == reservation_id), None)
+            if booking is None or any(
+                booking[k] != expected[k] for k in
+                ("RoomID", "EventName", "EventType", "StartTime", "EndTime", "StudentCount")
+            ):
+                return None
+            room = next((r for r in self.rooms if r["RoomID"] == room_id), None)
+            if (room is None or room["Capacity"] < student_count or
+                room["ComputerCount"] < min_computers or
+                (require_projector and not room["HasProjector"])):
+                return None
+            if any(
+                r["ReservationID"] != reservation_id and r["RoomID"] == room_id and
+                r["StartTime"] < end and r["EndTime"] > start
+                for r in self.reservations
+            ):
+                return None
+            booking.update(RoomID=room_id, EventName=event_name, EventType=event_type,
+                           StartTime=start, EndTime=end, StudentCount=student_count)
+            return dict(booking)

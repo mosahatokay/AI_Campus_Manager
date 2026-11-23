@@ -1,0 +1,217 @@
+{
+  "name": "update_reservation",
+  "description": "Modify an existing reservation after explicit secretary approval; keep the same reservation ID. Supports partial edits and atomically rechecks capacity, equipment, conflicts, and unchanged original booking before writing.",
+  "type": "write",
+  "requires_approval": true,
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "reservation_id": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "room_id": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "event_name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "event_type": {
+        "type": "string",
+        "enum": [
+          "Exam",
+          "Class",
+          "Event"
+        ]
+      },
+      "date": {
+        "type": "string",
+        "format": "date"
+      },
+      "start_time": {
+        "type": "string",
+        "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+      },
+      "end_time": {
+        "type": "string",
+        "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+      },
+      "student_count": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "min_computers": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 0
+      },
+      "require_projector": {
+        "type": "boolean",
+        "default": false
+      }
+    },
+    "required": [
+      "reservation_id"
+    ],
+    "anyOf": [
+      {
+        "required": [
+          "room_id"
+        ]
+      },
+      {
+        "required": [
+          "event_name"
+        ]
+      },
+      {
+        "required": [
+          "event_type"
+        ]
+      },
+      {
+        "required": [
+          "date"
+        ]
+      },
+      {
+        "required": [
+          "start_time"
+        ]
+      },
+      {
+        "required": [
+          "end_time"
+        ]
+      },
+      {
+        "required": [
+          "student_count"
+        ]
+      }
+    ],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "ok"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "reservation_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "room_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "event_name": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string",
+                "format": "date"
+              },
+              "start_time": {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              "end_time": {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              "student_count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "reservation_id",
+              "room_id",
+              "event_name",
+              "date",
+              "start_time",
+              "end_time",
+              "student_count"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "error"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "message",
+              "retryable"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "status",
+          "error"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "permissions": {
+    "read_only": false,
+    "requires_confirmation": true,
+    "approval_source": "trusted_application_state_not_model_arguments"
+  },
+  "business_rules": {
+    "working_days": [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday"
+    ],
+    "opening_time": "08:00",
+    "closing_time": "22:00",
+    "partial_update_preserves_unspecified_fields": true,
+    "preserve_reservation_id": true,
+    "recheck_conflicts_inside_transaction": true,
+    "exclude_self_from_conflict_check": true,
+    "check_original_row_unchanged": true,
+    "automatic_write_retry": false,
+    "require_existing_reservation": true,
+    "do_not_accept_approval_in_model_arguments": true
+  }
+}

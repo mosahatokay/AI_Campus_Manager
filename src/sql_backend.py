@@ -113,5 +113,63 @@ class SQLServerBackend:
                 "StartTime": row[2], "EndTime": row[3],
             }
 
+    def reservation_by_id(self, reservation_id):
+        """Read the current full booking; caller never updates without confirmation."""
+        cur = self.query("""SELECT ReservationID, RoomID, EventName, EventType,
+                                 StartTime, EndTime, StudentCount
+                          FROM dbo.Reservations WHERE ReservationID = ?""", reservation_id)
+        row = cur.fetchone()
+        return dict(zip((column[0] for column in cur.description), row)) if row else None
+
+    def update_reservation_atomic(self, *, reservation_id, expected, room_id,
+                                  event_name, event_type, start, end, student_count,
+                                  min_computers=0, require_projector=False):
+        """Compare-and-update in one transaction, without retrying uncertain writes.
+
+        Locks the booking/target room and checks time overlaps excluding the
+        reservation itself. Matches original values to reject stale updates.
+        """
+        with self.connection:
+            cur = self.connection.cursor()
+            cur.execute("""
+                UPDATE booking
+                SET RoomID = ?, EventName = ?, EventType = ?,
+                    StartTime = ?, EndTime = ?, StudentCount = ?
+                OUTPUT INSERTED.ReservationID, INSERTED.RoomID,
+                       INSERTED.EventName, INSERTED.StartTime,
+                       INSERTED.EndTime, INSERTED.StudentCount
+                FROM dbo.Reservations AS booking WITH (UPDLOCK, HOLDLOCK)
+                INNER JOIN dbo.Rooms AS room WITH (UPDLOCK, HOLDLOCK)
+                    ON room.RoomID = ?
+                WHERE booking.ReservationID = ?
+                  AND booking.RoomID = ?
+                  AND booking.EventName = ?
+                  AND booking.EventType = ?
+                  AND booking.StartTime = ?
+                  AND booking.EndTime = ?
+                  AND booking.StudentCount = ?
+                  AND room.Capacity >= ?
+                  AND room.ComputerCount >= ?
+                  AND (? = 0 OR room.HasProjector = 1)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM dbo.Reservations AS conflict WITH (UPDLOCK, HOLDLOCK)
+                      WHERE conflict.RoomID = room.RoomID
+                        AND conflict.ReservationID <> booking.ReservationID
+                        AND conflict.StartTime < ? AND conflict.EndTime > ?
+                  )
+            """, room_id, event_name, event_type, start, end, student_count,
+                 room_id, reservation_id,
+                 expected["RoomID"], expected["EventName"], expected["EventType"],
+                 expected["StartTime"], expected["EndTime"], expected["StudentCount"],
+                 student_count, min_computers, int(require_projector), end, start)
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "ReservationID": int(row[0]), "RoomID": int(row[1]),
+                "EventName": row[2], "StartTime": row[3],
+                "EndTime": row[4], "StudentCount": int(row[5]),
+            }
+
     def close(self):
         self.connection.close()
