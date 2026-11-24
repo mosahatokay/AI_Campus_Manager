@@ -7,7 +7,7 @@
     {
       "mode": "full",
       "messages": 22,
-      "characters": 3141,
+      "characters": 3153,
       "question": "מה שם האירוע של ההזמנה שאושרה קודם?",
       "answer": "Physics Midterm - Synthetic Test",
       "expected": "Physics Midterm - Synthetic Test",
@@ -17,7 +17,7 @@
     {
       "mode": "compact",
       "messages": 8,
-      "characters": 1948,
+      "characters": 1960,
       "question": "מה שם האירוע של ההזמנה שאושרה קודם?",
       "answer": "אין לי את שם האירוע בהקשר שנמסר לי.",
       "expected": "Physics Midterm - Synthetic Test",
