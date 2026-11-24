@@ -1,0 +1,28 @@
+{
+  "experiment": "Identical approved reservation + 8 follow-up turns + same factual question",
+  "model": "VerifiedResultReader (rule-based test double, NOT an LLM)",
+  "data": "Synthetic MockBackend; no SQL Server/API/paid inference",
+  "claim_limit": "Tests which facts remain in context. Does not measure LLM accuracy.",
+  "results": [
+    {
+      "mode": "full",
+      "messages": 22,
+      "characters": 3141,
+      "question": "מה שם האירוע של ההזמנה שאושרה קודם?",
+      "answer": "Physics Midterm - Synthetic Test",
+      "expected": "Physics Midterm - Synthetic Test",
+      "answer_correct": true,
+      "notes": "The approved event title survives in the full verified result."
+    },
+    {
+      "mode": "compact",
+      "messages": 8,
+      "characters": 1948,
+      "question": "מה שם האירוע של ההזמנה שאושרה קודם?",
+      "answer": "אין לי את שם האירוע בהקשר שנמסר לי.",
+      "expected": "Physics Midterm - Synthetic Test",
+      "answer_correct": false,
+      "notes": "The structured compact summary omits the event title; the reader does not guess."
+    }
+  ]
+}
