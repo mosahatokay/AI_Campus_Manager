@@ -1,0 +1,96 @@
+{
+  "scenario": "transient_failure",
+  "simulation_notice": "This is a REPRODUCIBLE SCRIPTED MOCK run, NOT a real LLM decision. No SQL Server, API, GPU, or private database was used.",
+  "setup": {
+    "decision_provider": "ScriptedModel (predetermined decisions)",
+    "data_provider": "MockBackend (120 synthetic rooms, 6 synthetic reservations)",
+    "context_mode": "full",
+    "agent_step_limit": 4,
+    "read_retries": 2,
+    "temporary_failures_injected": 3
+  },
+  "user_request": "בדקי אם חדר 4 פנוי ביום רביעי 02.12.2026, וכתבי את שעות הזמינות שלו.",
+  "scripted_decisions": [
+    {
+      "tool": "get_availability",
+      "arguments": {
+        "room_id": 4,
+        "date": "2026-12-02"
+      }
+    },
+    {
+      "message": "לא ניתן לבדוק זמינות כרגע: שירות החדרים אינו זמין זמנית. לא בוצע שינוי."
+    }
+  ],
+  "timeline": [
+    {
+      "step": 1,
+      "actor": "ScriptedModel",
+      "decision": "call_tool",
+      "tool": "get_availability",
+      "arguments": {
+        "room_id": 4,
+        "date": "2026-12-02"
+      }
+    },
+    {
+      "step": 1,
+      "actor": "CampusTools",
+      "decision": "execute_and_observe",
+      "tool": "get_availability",
+      "attempts": 3,
+      "observation": {
+        "status": "error",
+        "error": {
+          "type": "service_unavailable",
+          "message": "Temporary backend failure; retries exhausted",
+          "retryable": true
+        }
+      }
+    },
+    {
+      "step": 2,
+      "actor": "ScriptedModel",
+      "decision": "final_answer",
+      "answer": "לא ניתן לבדוק זמינות כרגע: שירות החדרים אינו זמין זמנית. לא בוצע שינוי.",
+      "stop_reason": "model_returned_message"
+    }
+  ],
+  "tool_trace": [
+    {
+      "tool": "get_availability",
+      "decision": "executed",
+      "attempts": 3,
+      "status": "error",
+      "reason": "service_unavailable",
+      "latency_ms": 0.12
+    }
+  ],
+  "agent_audit": [
+    {
+      "step": 1,
+      "decision": "tool_result",
+      "tool": "get_availability",
+      "status": "error",
+      "error_type": "service_unavailable"
+    },
+    {
+      "step": 2,
+      "decision": "answer"
+    }
+  ],
+  "backend_calls": 3,
+  "reservations_before": 6,
+  "reservations_after": 6,
+  "final_result": {
+    "status": "ok",
+    "answer": "לא ניתן לבדוק זמינות כרגע: שירות החדרים אינו זמין זמנית. לא בוצע שינוי."
+  },
+  "assessment": {
+    "tool_outcome": "error",
+    "temporary_error_detected": true,
+    "error_class": "service_unavailable",
+    "read_only_unchanged": true,
+    "did_model_understand_hebrew": "Not tested: answers/decisions were scripted"
+  }
+}
