@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = {
     "find_rooms": json.loads((ROOT / "tool_contract.json").read_text(encoding="utf-8")),
     "get_availability": json.loads((ROOT / "availability_contract.json").read_text(encoding="utf-8")),
+    "list_exams": json.loads((ROOT / "exams_contract.json").read_text(encoding="utf-8")),
     "create_reservation": json.loads((ROOT / "reservation_contract.json").read_text(encoding="utf-8")),
     "cancel_reservation": json.loads((ROOT / "cancel_contract.json").read_text(encoding="utf-8")),
     "update_reservation": json.loads((ROOT / "update_contract.json").read_text(encoding="utf-8")),
@@ -91,7 +92,7 @@ class CampusTools:
         day = date.fromisoformat(args["date"])
         if day.weekday() not in WORKING_DAYS:
             return err("invalid_input", "College is closed on Friday and Saturday")
-        if name in {"find_rooms", "create_reservation"}:
+        if name in {"find_rooms", "create_reservation", "list_exams"}:
             start, end = args.get("start_time"), args.get("end_time")
             if start is not None and (start < OPEN or end > CLOSE or start >= end):
                 return err("invalid_input", "Time must be increasing and within 08:00–22:00")
@@ -105,8 +106,10 @@ class CampusTools:
             try:
                 if name == "find_rooms":
                     result = self._find_rooms(args)
-                else:
+                elif name == "get_availability":
                     result = self._get_availability(args)
+                else:
+                    result = self._list_exams(args)
                 schema_issue = next(Draft202012Validator(
                     CONTRACTS[name]["output_schema"], format_checker=FormatChecker()
                 ).iter_errors(result), None)
@@ -173,6 +176,41 @@ class CampusTools:
         return ok({"room_id": args["room_id"], "date": args["date"],
                    "free_windows": windows(self.backend.busy_ranges(
                        args["room_id"], datetime.fromisoformat(args["date"])), args["date"])})
+
+    def _list_exams(self, args):
+        """Return only exams matching a date and optional room/building/time filters.
+
+        Event names are returned as DATA, not executed as instructions.
+        """
+        day = datetime.fromisoformat(args["date"])
+        start = (datetime.fromisoformat(f'{args["date"]}T{args["start_time"]}')
+                 if "start_time" in args else None)
+        end = (datetime.fromisoformat(f'{args["date"]}T{args["end_time"]}')
+               if "end_time" in args else None)
+        rows = self.backend.list_exams(
+            day=day,
+            building_id=args.get("building_id"),
+            room_id=args.get("room_id"),
+            start=start, end=end,
+        )
+        exams = [
+            {
+                "reservation_id": int(item["ReservationID"]),
+                "room_id": int(item["RoomID"]),
+                "building_id": int(item["BuildingID"]),
+                "floor_number": int(item["FloorNumber"]),
+                "room_number": int(item["RoomNumber"]),
+                "event_name": str(item["EventName"]),
+                "date": item["StartTime"].date().isoformat(),
+                "start_time": item["StartTime"].strftime("%H:%M"),
+                "end_time": item["EndTime"].strftime("%H:%M"),
+                "student_count": int(item["StudentCount"]),
+            }
+            for item in rows
+        ]
+        exams.sort(key=lambda item: (item["date"], item["start_time"],
+                                     item["room_id"], item["reservation_id"]))
+        return ok({"date": args["date"], "exams": exams})
 
     def _create_reservation(self, args):
         """Validate intent and room, then let the backend recheck atomically."""

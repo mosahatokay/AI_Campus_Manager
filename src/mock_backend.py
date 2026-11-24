@@ -68,6 +68,35 @@ class MockBackend:
             r["EndTime"] > day
         ]
 
+    def list_exams(self, *, day, building_id=None, room_id=None, start=None, end=None):
+        """List synthetic exams using the same overlap rules as SQL Server."""
+        self.maybe_fail()
+        day_end = day + timedelta(days=1)
+        by_id = {room["RoomID"]: room for room in self.rooms}
+        with self._reservation_lock:
+            matches = []
+            for reservation in self.reservations:
+                if reservation["EventType"] != "Exam":
+                    continue
+                if not (reservation["StartTime"] < day_end and reservation["EndTime"] > day):
+                    continue
+                room = by_id.get(reservation["RoomID"])
+                if room is None:
+                    continue
+                if building_id is not None and room["BuildingID"] != building_id:
+                    continue
+                if room_id is not None and room["RoomID"] != room_id:
+                    continue
+                if start is not None and not (
+                    reservation["StartTime"] < end and reservation["EndTime"] > start
+                ):
+                    continue
+                matches.append({**reservation,
+                                "BuildingID": room["BuildingID"],
+                                "FloorNumber": room["FloorNumber"],
+                                "RoomNumber": room["RoomNumber"]})
+        return matches
+
     def create_reservation_atomic(self, *, room_id, event_name, event_type, start, end,
                                   student_count, min_computers=0, require_projector=False):
         """Atomically recheck room constraints/conflicts and add one mock booking."""

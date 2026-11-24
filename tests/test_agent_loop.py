@@ -20,9 +20,9 @@ def factory(actions, **opts):
     return CampusAgent(model, tools, **opts), backend, tools, model
 
 
-def test_contracts_all_five_available():
+def test_contracts_all_approved_capabilities_available():
     names = {t["function"]["name"] for t in tool_definitions()}
-    assert names == {"find_rooms", "get_availability", "create_reservation",
+    assert names == {"find_rooms", "get_availability", "list_exams", "create_reservation",
                      "cancel_reservation", "update_reservation"}
     assert all(t["function"]["parameters"]["type"] == "object" for t in tool_definitions())
 

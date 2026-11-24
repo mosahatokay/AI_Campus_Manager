@@ -19,7 +19,7 @@ WRITE_TOOLS = frozenset({"create_reservation", "cancel_reservation", "update_res
 
 SYSTEM_PROMPT = """You are CampusAI, a Hebrew-speaking assistant for the college head secretary.
 You choose the next tool (or a final answer) based on the user's request and tool results.
-You can search rooms, view availability, create, cancel, and edit reservations.
+You can search rooms, view availability, list exams, create, cancel, and edit reservations.
 Work days: Sunday–Thursday. Work hours: 08:00–22:00. Do not book Friday or Saturday.
 Recommend the smallest free room meeting the capacity and equipment requirements;
 mention larger alternatives when returned. Computer count is a HARD minimum.
@@ -72,6 +72,12 @@ def safe_memory(name: str, result: dict[str, Any]) -> dict[str, Any]:
         } for r in data.get("rooms", [])[:5]]
     elif name == "get_availability":
         summary.update({key: data[key] for key in ("room_id", "date", "free_windows") if key in data})
+    elif name == "list_exams":
+        summary["date"] = data.get("date")
+        # Keep only structured facts; omit untrusted exam titles from compact memory.
+        summary["exams"] = [{key: row[key] for key in (
+            "reservation_id", "room_id", "building_id", "date", "start_time", "end_time"
+        ) if key in row} for row in data.get("exams", [])[:10]]
     else:
         summary.update({key: data[key] for key in (
             "reservation_id", "room_id", "date", "start_time", "end_time", "student_count"

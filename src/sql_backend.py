@@ -59,6 +59,31 @@ class SQLServerBackend:
             ORDER BY StartTime""", room_id, day + timedelta(days=1), day)
         return [(r[0], r[1]) for r in cur.fetchall()]
 
+    def list_exams(self, *, day, building_id=None, room_id=None, start=None, end=None):
+        """Read only scheduled exams; optional filters are SQL parameters, never concatenated."""
+        from datetime import timedelta
+        statement = """SELECT res.ReservationID, res.RoomID, room.BuildingID,
+                room.FloorNumber, room.RoomNumber, res.EventName,
+                res.StartTime, res.EndTime, res.StudentCount
+            FROM dbo.Reservations AS res
+            JOIN dbo.Rooms AS room ON room.RoomID = res.RoomID
+            WHERE res.EventType = 'Exam'
+              AND res.StartTime < ? AND res.EndTime > ?"""
+        params = [day + timedelta(days=1), day]
+        if building_id is not None:
+            statement += " AND room.BuildingID = ?"
+            params.append(building_id)
+        if room_id is not None:
+            statement += " AND res.RoomID = ?"
+            params.append(room_id)
+        if start is not None:
+            statement += " AND res.StartTime < ? AND res.EndTime > ?"
+            params.extend([end, start])
+        statement += " ORDER BY res.StartTime, res.RoomID, res.ReservationID"
+        cur = self.query(statement, *params)
+        columns = [column[0] for column in cur.description]
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+
     def create_reservation_atomic(self, *, room_id, event_name, event_type, start, end,
                                   student_count, min_computers=0, require_projector=False):
         """Insert only if still valid/free; row/range locks protect concurrent writes.
